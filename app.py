@@ -387,6 +387,66 @@ div[data-testid="stDataFrame"] {
 .login-card{max-width:520px;margin:60px auto;background:linear-gradient(135deg,#fff,#eff6ff 65%,#fef3c7);border:1px solid #60a5fa;border-radius:26px;padding:32px;box-shadow:0 18px 44px rgba(37,99,235,.18)}
 .login-title{font-size:34px;font-weight:950;color:#12337a;text-align:center}
 .login-subtitle{text-align:center;color:#475569;font-weight:800;margin-bottom:22px}
+
+/* ============================================================
+   LOGIN PRO FINAL
+   ============================================================ */
+.login-wrap {
+    max-width: 430px;
+    margin: 40px auto 0 auto;
+}
+
+.login-card-pro {
+    background: linear-gradient(135deg, #ffffff 0%, #eff6ff 72%, #fff4c2 100%);
+    border: 1px solid #60a5fa;
+    border-radius: 28px;
+    padding: 34px 34px 30px 34px;
+    box-shadow: 0 22px 55px rgba(37,99,235,.22);
+    text-align: center;
+}
+
+.login-logo-box {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 18px;
+}
+
+.login-title-pro {
+    font-size: 30px;
+    font-weight: 950;
+    color: #12337a;
+    margin-bottom: 5px;
+    letter-spacing: -0.5px;
+}
+
+.login-subtitle-pro {
+    font-size: 14px;
+    color: #475569;
+    font-weight: 800;
+    margin-bottom: 20px;
+}
+
+.login-wrap .stTextInput {
+    max-width: 360px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.login-wrap .stButton {
+    max-width: 360px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.login-wrap .stButton > button {
+    margin-top: 10px !important;
+    width: 100% !important;
+    border-radius: 14px !important;
+    min-height: 44px !important;
+    font-weight: 900 !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -443,15 +503,34 @@ def validar_login(usuario, password):
     return df.iloc[0].to_dict()
 
 def login_screen():
-    st.markdown('<div class="login-card">', unsafe_allow_html=True)
+    # Oculta el header/toolbar/footer de Streamlit en la pantalla de login.
+    st.markdown("""
+    <style>
+        header {visibility: hidden !important;}
+        footer {visibility: hidden !important;}
+        #MainMenu {visibility: hidden !important;}
+        div[data-testid="stToolbar"] {visibility: hidden !important;}
+        div[data-testid="stDecoration"] {visibility: hidden !important;}
+        .block-container {
+            padding-top: 1.5rem !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
+    st.markdown('<div class="login-card-pro">', unsafe_allow_html=True)
+
     if os.path.exists("logo.png"):
-        c1, c2, c3 = st.columns([1,1,1])
-        with c2:
-            st.image("logo.png", width=150)
-    st.markdown('<div class="login-title">Ingreso al sistema</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-subtitle">CRM comercial multiusuario</div>', unsafe_allow_html=True)
-    usuario = st.text_input("Usuario")
-    password = st.text_input("Contraseña", type="password")
+        st.markdown('<div class="login-logo-box">', unsafe_allow_html=True)
+        st.image("logo.png", width=230)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="login-title-pro">Ingreso al sistema</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-subtitle-pro">CRM comercial multiusuario</div>', unsafe_allow_html=True)
+
+    usuario = st.text_input("Usuario", placeholder="Ingresá tu usuario")
+    password = st.text_input("Contraseña", type="password", placeholder="Ingresá tu contraseña")
+
     if st.button("Ingresar", use_container_width=True):
         user = validar_login(usuario, password)
         if user is None:
@@ -459,8 +538,10 @@ def login_screen():
         else:
             st.session_state["usuario_logueado"] = user
             st.rerun()
-    st.info("Usuarios iniciales: admin / admin123  ó  cristian / 1234")
-    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
 
 def usuario_actual():
     return st.session_state.get("usuario_logueado")
