@@ -1198,6 +1198,14 @@ crear_usuario_inicial()
 preparar_base_modo_empresa()
 migrar_excel_a_sqlite()
 
+if "usuario_logueado" not in st.session_state:
+    login_screen()
+    st.stop()
+
+USER = usuario_actual()
+ID_USUARIO = id_usuario_actual()
+ES_ADMIN = es_admin()
+
 df_clientes = leer_sql("clientes")
 df_pedidos = leer_sql("pedidos")
 df_pagos = leer_sql("pagos")
