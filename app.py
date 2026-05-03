@@ -422,6 +422,9 @@ def crear_usuario_inicial():
     con.close()
 
 def obtener_usuarios():
+    # Seguridad extra para Streamlit Cloud:
+    # si la base ya existía pero todavía no tenía tabla usuarios, la crea antes de leer.
+    crear_usuario_inicial()
     con = conectar()
     df = pd.read_sql_query("SELECT id_usuario, usuario, nombre, rol, activo FROM usuarios ORDER BY nombre", con)
     con.close()
@@ -1191,6 +1194,7 @@ def cargar_precios():
 # INICIAR DATOS
 # ============================================================
 crear_tablas()
+crear_usuario_inicial()
 preparar_base_modo_empresa()
 migrar_excel_a_sqlite()
 
