@@ -2,6 +2,7 @@
 import os
 import re
 import sqlite3
+import hashlib
 from io import BytesIO
 from datetime import date, datetime
 
@@ -382,6 +383,10 @@ div[data-testid="stDataFrame"] {
     white-space: nowrap;
 }
 
+
+.login-card{max-width:520px;margin:60px auto;background:linear-gradient(135deg,#fff,#eff6ff 65%,#fef3c7);border:1px solid #60a5fa;border-radius:26px;padding:32px;box-shadow:0 18px 44px rgba(37,99,235,.18)}
+.login-title{font-size:34px;font-weight:950;color:#12337a;text-align:center}
+.login-subtitle{text-align:center;color:#475569;font-weight:800;margin-bottom:22px}
 </style>
 """, unsafe_allow_html=True)
 
@@ -391,6 +396,80 @@ div[data-testid="stDataFrame"] {
 # ============================================================
 def conectar():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+def hash_password(password):
+    return hashlib.sha256(str(password).encode("utf-8")).hexdigest()
+
+def crear_usuario_inicial():
+    con = conectar()
+    cur = con.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS usuarios (
+        id_usuario INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario TEXT UNIQUE,
+        password_hash TEXT,
+        nombre TEXT,
+        rol TEXT DEFAULT 'vendedor',
+        activo INTEGER DEFAULT 1
+    )
+    """)
+    if cur.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0] == 0:
+        cur.execute("INSERT INTO usuarios (usuario,password_hash,nombre,rol,activo) VALUES (?,?,?,?,?)",
+                    ("admin", hash_password("admin123"), "Administrador", "admin", 1))
+        cur.execute("INSERT INTO usuarios (usuario,password_hash,nombre,rol,activo) VALUES (?,?,?,?,?)",
+                    ("cristian", hash_password("1234"), "Cristian Rodriguez", "admin", 1))
+    con.commit()
+    con.close()
+
+def obtener_usuarios():
+    con = conectar()
+    df = pd.read_sql_query("SELECT id_usuario, usuario, nombre, rol, activo FROM usuarios ORDER BY nombre", con)
+    con.close()
+    return df
+
+def validar_login(usuario, password):
+    con = conectar()
+    df = pd.read_sql_query(
+        "SELECT id_usuario, usuario, nombre, rol, activo FROM usuarios WHERE usuario=? AND password_hash=? AND activo=1",
+        con,
+        params=(usuario, hash_password(password)),
+    )
+    con.close()
+    if df.empty:
+        return None
+    return df.iloc[0].to_dict()
+
+def login_screen():
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
+    if os.path.exists("logo.png"):
+        c1, c2, c3 = st.columns([1,1,1])
+        with c2:
+            st.image("logo.png", width=150)
+    st.markdown('<div class="login-title">Ingreso al sistema</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-subtitle">CRM comercial multiusuario</div>', unsafe_allow_html=True)
+    usuario = st.text_input("Usuario")
+    password = st.text_input("Contraseña", type="password")
+    if st.button("Ingresar", use_container_width=True):
+        user = validar_login(usuario, password)
+        if user is None:
+            st.error("Usuario o contraseña incorrectos.")
+        else:
+            st.session_state["usuario_logueado"] = user
+            st.rerun()
+    st.info("Usuarios iniciales: admin / admin123  ó  cristian / 1234")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+def usuario_actual():
+    return st.session_state.get("usuario_logueado")
+
+def es_admin():
+    user = usuario_actual()
+    return bool(user and user.get("rol") == "admin")
+
+def id_usuario_actual():
+    user = usuario_actual()
+    return int(user.get("id_usuario")) if user else None
+
 
 
 def fmt_ars(valor):
@@ -703,6 +782,14 @@ def asegurar_columna(tabla, columna, tipo_sql):
 
 
 def preparar_base_modo_empresa():
+    # Columnas multiusuario.
+    asegurar_columna("clientes", "id_usuario", "INTEGER DEFAULT 1")
+    asegurar_columna("pedidos", "id_usuario", "INTEGER DEFAULT 1")
+    asegurar_columna("pagos", "id_usuario", "INTEGER DEFAULT 1")
+    asegurar_columna("visitas", "id_usuario", "INTEGER DEFAULT 1")
+    asegurar_columna("objetivos", "id_usuario", "INTEGER DEFAULT 1")
+    asegurar_columna("notas_credito", "id_usuario", "INTEGER DEFAULT 1")
+
     # Columnas para fecha de entrega real.
     asegurar_columna("pedidos", "fecha_entrega", "TEXT")
     asegurar_columna("notas_credito", "fecha_entrega", "TEXT")
@@ -1128,6 +1215,7 @@ df_clientes = df_clientes.rename(
         "localidad": "Localidad",
         "provincia": "Provincia",
         "estado": "Estado",
+        "id_usuario": "ID Usuario",
     }
 )
 
@@ -1157,6 +1245,7 @@ df_pedidos = df_pedidos.rename(
         "comision_total": "Comisión Total",
         "categoria_comision_venta": "Categoría Comisión Venta",
         "porcentaje_comision_venta": "Porcentaje Comisión Venta",
+        "id_usuario": "ID Usuario",
     }
 )
 
@@ -1178,6 +1267,7 @@ df_pagos = df_pagos.rename(
         "dias_al_cobro_externo": "Dias al Cobro Externo",
         "regla_cobranza_externa": "Regla Cobranza Externa",
         "comision_cobranza_externa": "Comisión Cobranza Externa",
+        "id_usuario": "ID Usuario",
     }
 )
 
@@ -1193,6 +1283,7 @@ df_notas_credito = df_notas_credito.rename(
         "motivo": "Motivo",
         "observacion": "Observación",
         "comision_venta_descontada": "Comisión Venta Descontada",
+        "id_usuario": "ID Usuario",
     }
 )
 
@@ -1207,6 +1298,7 @@ df_visitas = df_visitas.rename(
         "resultado": "Resultado",
         "observacion": "Observación",
         "proxima_accion": "Próxima acción",
+        "id_usuario": "ID Usuario",
     }
 )
 
@@ -1217,6 +1309,7 @@ df_objetivos = df_objetivos.rename(
         "meta_toneladas": "Meta Toneladas",
         "meta_pedidos": "Meta Pedidos",
         "fecha_actualizacion": "Fecha Actualización",
+        "id_usuario": "ID Usuario",
     }
 )
 
@@ -1257,6 +1350,18 @@ for c in ["Monto Nota", "Comisión Venta Descontada"]:
 
 # Recalcula comisión de venta por producto y rango de facturación.
 df_pedidos = recalcular_comisiones_venta_en_memoria_y_db(df_pedidos, df_comisiones_venta)
+
+# =========================
+# FILTRO MULTIUSUARIO
+# =========================
+df_usuarios = obtener_usuarios()
+
+if not ES_ADMIN:
+    for nombre_df in ["df_clientes", "df_pedidos", "df_pagos", "df_visitas", "df_objetivos", "df_notas_credito"]:
+        df_tmp = globals()[nombre_df]
+        if "ID Usuario" in df_tmp.columns:
+            globals()[nombre_df] = df_tmp[df_tmp["ID Usuario"].fillna(1).astype(int) == ID_USUARIO].copy()
+
 
 
 # ============================================================
@@ -1304,12 +1409,19 @@ ultima_visita_venta = (
 df_final = df_clientes.merge(ultima_compra, on="Cliente", how="left")
 df_final = df_final.merge(ultima_visita_venta, on="Cliente", how="left")
 
+# Evita errores en Streamlit Cloud si por algún Excel/base aparecen columnas duplicadas.
+df_final = df_final.loc[:, ~df_final.columns.duplicated()].copy()
+
 df_final["Referencia Comercial"] = df_final["Ultima Compra"]
-mask_ref = df_final["Referencia Comercial"].isna() | (
-    pd.to_datetime(df_final["Ultima Visita Venta"], errors="coerce")
-    > pd.to_datetime(df_final["Referencia Comercial"], errors="coerce")
+
+ref_comercial = pd.to_datetime(df_final["Referencia Comercial"], errors="coerce")
+ref_visita = pd.to_datetime(df_final["Ultima Visita Venta"], errors="coerce")
+
+mask_ref = ref_comercial.isna() | (ref_visita > ref_comercial)
+df_final["Referencia Comercial"] = df_final["Referencia Comercial"].where(
+    ~mask_ref,
+    df_final["Ultima Visita Venta"]
 )
-df_final.loc[mask_ref, "Referencia Comercial"] = df_final.loc[mask_ref, "Ultima Visita Venta"]
 
 df_final["Dias sin comprar"] = (
     pd.Timestamp.today().normalize() - pd.to_datetime(df_final["Referencia Comercial"], errors="coerce")
@@ -1383,6 +1495,11 @@ if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", width=170)
 
 st.sidebar.markdown('<div class="sidebar-title">CRISTIAN RODRIGUEZ</div>', unsafe_allow_html=True)
+st.sidebar.caption(f"Usuario: {USER.get('nombre')} · Rol: {USER.get('rol').upper()}")
+if st.sidebar.button("Cerrar sesión", use_container_width=True):
+    st.session_state.pop("usuario_logueado", None)
+    st.rerun()
+
 st.sidebar.markdown('<div class="sidebar-section">Panel principal</div>', unsafe_allow_html=True)
 
 menu = st.sidebar.radio(
@@ -1832,9 +1949,9 @@ elif menu == "Pedidos":
                         cantidad_bultos, kilos_por_bulto, precio_lista, precio_venta, importe, toneladas,
                         cobrado, fecha_cobro, dias_al_cobro, porcentaje_cobranza, regla_cobranza,
                         comision_venta, comision_cobranza, comision_total,
-                        categoria_comision_venta, porcentaje_comision_venta
+                        categoria_comision_venta, porcentaje_comision_venta, id_usuario
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         pedido_id,
@@ -1860,6 +1977,7 @@ elif menu == "Pedidos":
                         comision_venta,
                         categoria_comision_venta,
                         porcentaje_comision_venta,
+                        ID_USUARIO,
                     ),
                 )
                 con.commit()
@@ -2030,9 +2148,9 @@ elif menu == "Pagos":
                     INSERT INTO pagos (
                         fecha, hora, cliente, monto_abonado, medio_pago, observacion, aplicado_a_pedido,
                         tipo_pago, pedido_externo, fecha_pedido_externo, fecha_entrega_externa, importe_pedido_externo,
-                        dias_al_cobro_externo, regla_cobranza_externa, comision_cobranza_externa
+                        dias_al_cobro_externo, regla_cobranza_externa, comision_cobranza_externa, id_usuario
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     str(fecha_pago),
                     datetime.now().strftime("%H:%M:%S"),
@@ -2049,6 +2167,7 @@ elif menu == "Pagos":
                     dias_externo if pago_externo else 0,
                     regla_externa if pago_externo else "",
                     comision_cobranza_externa if pago_externo else 0,
+                    ID_USUARIO,
                 ))
                 con.commit()
                 con.close()
@@ -2130,9 +2249,9 @@ elif menu == "Notas de Crédito":
                 con = conectar()
                 con.execute("""
                     INSERT INTO notas_credito (
-                        fecha, hora, cliente, pedido_id, fecha_entrega, monto_nota, motivo, observacion, comision_venta_descontada
+                        fecha, hora, cliente, pedido_id, fecha_entrega, monto_nota, motivo, observacion, comision_venta_descontada, id_usuario
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     str(fecha_nota),
                     datetime.now().strftime("%H:%M:%S"),
@@ -2143,6 +2262,7 @@ elif menu == "Notas de Crédito":
                     motivo,
                     observacion_nota,
                     comision_descontada,
+                    ID_USUARIO,
                 ))
                 con.commit()
                 con.close()
@@ -2333,6 +2453,15 @@ elif menu == "Clientes":
         nueva_loc = c6.text_input("Localidad")
         nueva_prov = c7.text_input("Provincia")
         nuevo_estado = c8.selectbox("Estado", ["Habilitada", "Inhabilitada"])
+
+        usuario_cliente_id = ID_USUARIO
+        if ES_ADMIN and not df_usuarios.empty:
+            mapa_usuarios_cliente = {
+                f"{r['nombre']} ({r['usuario']})": int(r["id_usuario"])
+                for _, r in df_usuarios[df_usuarios["activo"] == 1].iterrows()
+            }
+            usuario_cliente_label = st.selectbox("Asignar cliente a usuario", list(mapa_usuarios_cliente.keys()))
+            usuario_cliente_id = mapa_usuarios_cliente[usuario_cliente_label]
 
         if st.button("Guardar cliente"):
             if nuevo_cliente == "":
