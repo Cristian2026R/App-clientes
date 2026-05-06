@@ -918,10 +918,10 @@ def preparar_base_modo_empresa():
         ("Premezclas", "premezcla,premezclas,chipa", 2.00, 1.00, 0.500, 0, 4),
         ("Acondicionadas 0000", "acondicionada 0000,acondicionadas 0000", 2.00, 1.00, 0.500, 0, 5),
         ("Acondicionadas 000", "acondicionada 000,acondicionadas 000", 1.00, 0.50, 0.250, 0, 6),
-        ("Blancas", "blanca,blancas,harina 0000,0000,semolin,semolín,semola,sémola", 1.50, 0.75, 0.375, 0, 7),
+        ("Blancas", "blanca,blancas,harina 0000,0000,semolin,semolín,semola,sémola,tapera,pigue 0000", 1.50, 0.75, 0.375, 0, 7),
         ("Subp Espe", "subp,subproducto,especial,espe", 3.00, 1.50, 0.750, 0, 8),
         ("Terminadas", "terminada,terminadas", 1.00, 0.50, 0.250, 0, 9),
-        ("Commodities", "commodity,commodities,000,harina 000", 0.50, 0.25, 0.125, 0, 10),
+        ("Commodities", "commodity,commodities,000,harina 000,acondicionado pigue,acondicionada pigue", 0.50, 0.25, 0.125, 0, 10),
     ]
     cur.executemany("""
         INSERT OR REPLACE INTO comisiones_venta
@@ -953,86 +953,101 @@ def normalizar_busqueda(txt):
 def calcular_porcentaje_comision_venta(producto, total_facturado_cliente, df_comisiones):
     producto_txt = normalizar_busqueda(producto)
 
-    # Reglas críticas directas para evitar errores de clasificación.
-    # Semolín/Semolin/Sémola = Blancas.
-    if "semolin" in producto_txt or "semola" in producto_txt:
+    def pct_por_rango(bajo, medio, alto, categoria):
+        # Canal artesanal según tabla enviada
         if total_facturado_cliente <= 250_000_000:
-            return 1.50, "Blancas"
+            return bajo, categoria
         elif total_facturado_cliente <= 500_000_000:
-            return 0.75, "Blancas"
+            return medio, categoria
         else:
-            return 0.375, "Blancas"
+            return alto, categoria
 
-    # Chipa = Premezclas.
-    if "chipa" in producto_txt:
-        if total_facturado_cliente <= 250_000_000:
-            return 2.00, "Premezclas"
-        elif total_facturado_cliente <= 500_000_000:
-            return 1.00, "Premezclas"
-        else:
-            return 0.500, "Premezclas"
+    # PELLET: 1% fijo
+    if "pellet" in producto_txt:
+        return 1.00, "Pellet"
 
-    # 0000 común = Blancas. 000 común = Commodities.
-    # Si dice acondicionada/acondicionadas, se deja seguir a la tabla.
-    if "acondicionad" not in producto_txt:
-        if "0000" in producto_txt:
-            if total_facturado_cliente <= 250_000_000:
-                return 1.50, "Blancas"
-            elif total_facturado_cliente <= 500_000_000:
-                return 0.75, "Blancas"
-            else:
-                return 0.375, "Blancas"
+    # Premium / Integral / Rebozador / Aditivada
+    if (
+        "premium" in producto_txt
+        or "integral" in producto_txt
+        or "reboz" in producto_txt
+        or "aditiv" in producto_txt
+    ):
+        if "terminad" in producto_txt:
+            return pct_por_rango(2.00, 1.00, 0.500, "Terminadas premium")
+        return pct_por_rango(5.00, 2.50, 1.250, "Premium/Int/Reb/Adit")
 
-        if "000" in producto_txt and "0000" not in producto_txt:
-            if total_facturado_cliente <= 250_000_000:
-                return 0.50, "Commodities"
-            elif total_facturado_cliente <= 500_000_000:
-                return 0.25, "Commodities"
-            else:
-                return 0.125, "Commodities"
+    # Premezclas TODAS
+    if (
+        "premezcla" in producto_txt
+        or "premezclas" in producto_txt
+        or "chipa" in producto_txt
+        or "pizza" in producto_txt
+        or "bizcochuelo" in producto_txt
+        or "panqueque" in producto_txt
+        or "ñoqui" in producto_txt
+        or "noqui" in producto_txt
+    ):
+        return pct_por_rango(2.00, 1.00, 0.500, "Premezclas")
 
-    if df_comisiones is None or df_comisiones.empty:
-        return 0.0, "Sin regla"
+    # Subproductos especiales
+    if "subp" in producto_txt or "especial" in producto_txt or "espe" in producto_txt:
+        return pct_por_rango(3.00, 1.50, 0.750, "Subp Espe")
 
-    for _, regla in df_comisiones.iterrows():
-        claves = normalizar_busqueda(regla.get("palabras_clave", ""))
-        lista_claves = [normalizar_busqueda(c) for c in claves.split(",") if normalizar_busqueda(c)]
+    # Acondicionadas 0000
+    if "acondicion" in producto_txt and "0000" in producto_txt:
+        return pct_por_rango(2.00, 1.00, 0.500, "Acondicionadas 0000")
 
-        if any(clave in producto_txt for clave in lista_claves):
-            fijo = float(pd.to_numeric(regla.get("porcentaje_fijo", 0), errors="coerce") or 0)
-            if fijo > 0:
-                return fijo, limpiar_txt(regla.get("categoria", ""))
+    # Acondicionada Pigüé / Acondicionada 000 = commodity según indicación
+    if "pigue" in producto_txt and "acondicion" in producto_txt:
+        return pct_por_rango(0.50, 0.25, 0.125, "Commodities")
 
-            if total_facturado_cliente <= 250_000_000:
-                pct = float(pd.to_numeric(regla.get("hasta_250", 0), errors="coerce") or 0)
-            elif total_facturado_cliente <= 500_000_000:
-                pct = float(pd.to_numeric(regla.get("desde_250_500", 0), errors="coerce") or 0)
-            else:
-                pct = float(pd.to_numeric(regla.get("mas_500", 0), errors="coerce") or 0)
+    # Acondicionadas 000 general
+    if "acondicion" in producto_txt and "0000" not in producto_txt:
+        return pct_por_rango(1.00, 0.50, 0.250, "Acondicionadas 000")
 
-            return pct, limpiar_txt(regla.get("categoria", ""))
+    # Harina Pigüé 0000 = blancas
+    if "pigue" in producto_txt and "0000" in producto_txt:
+        return pct_por_rango(1.50, 0.75, 0.375, "Blancas")
 
-    return 0.0, "Sin regla"
+    # Tapera / Semolin / Semola = blancas
+    if "tapera" in producto_txt or "semolin" in producto_txt or "semola" in producto_txt:
+        return pct_por_rango(1.50, 0.75, 0.375, "Blancas")
 
-    for _, regla in df_comisiones.iterrows():
-        claves = normalizar_busqueda(regla.get("palabras_clave", ""))
-        lista_claves = [normalizar_busqueda(c) for c in claves.split(",") if normalizar_busqueda(c)]
+    # Blancas / 0000
+    if "blanca" in producto_txt or "0000" in producto_txt:
+        return pct_por_rango(1.50, 0.75, 0.375, "Blancas")
 
-        if any(clave in producto_txt for clave in lista_claves):
-            fijo = float(pd.to_numeric(regla.get("porcentaje_fijo", 0), errors="coerce") or 0)
-            if fijo > 0:
-                return fijo, limpiar_txt(regla.get("categoria", ""))
+    # Terminadas
+    if "terminad" in producto_txt:
+        return pct_por_rango(1.00, 0.50, 0.250, "Terminadas")
 
-            if total_facturado_cliente <= 250_000_000:
-                pct = float(pd.to_numeric(regla.get("hasta_250", 0), errors="coerce") or 0)
-            elif total_facturado_cliente <= 500_000_000:
-                pct = float(pd.to_numeric(regla.get("desde_250_500", 0), errors="coerce") or 0)
-            else:
-                pct = float(pd.to_numeric(regla.get("mas_500", 0), errors="coerce") or 0)
+    # Commodities / 000
+    if "commod" in producto_txt or ("000" in producto_txt and "0000" not in producto_txt):
+        return pct_por_rango(0.50, 0.25, 0.125, "Commodities")
 
-            return pct, limpiar_txt(regla.get("categoria", ""))
+    # Tabla adicional si existe
+    if df_comisiones is not None and not df_comisiones.empty:
+        for _, regla in df_comisiones.iterrows():
+            claves = normalizar_busqueda(regla.get("palabras_clave", ""))
+            lista_claves = [normalizar_busqueda(c) for c in claves.split(",") if normalizar_busqueda(c)]
 
-    return 0.0, "Sin regla"
+            if any(clave in producto_txt for clave in lista_claves):
+                fijo = float(pd.to_numeric(regla.get("porcentaje_fijo", 0), errors="coerce") or 0)
+                if fijo > 0:
+                    return fijo, limpiar_txt(regla.get("categoria", ""))
+
+                if total_facturado_cliente <= 250_000_000:
+                    pct = float(pd.to_numeric(regla.get("hasta_250", 0), errors="coerce") or 0)
+                elif total_facturado_cliente <= 500_000_000:
+                    pct = float(pd.to_numeric(regla.get("desde_250_500", 0), errors="coerce") or 0)
+                else:
+                    pct = float(pd.to_numeric(regla.get("mas_500", 0), errors="coerce") or 0)
+
+                if pct > 0:
+                    return pct, limpiar_txt(regla.get("categoria", ""))
+
+    return pct_por_rango(0.50, 0.25, 0.125, "Commodities")
 
 
 def recalcular_comisiones_venta_en_memoria_y_db(df_pedidos_actual, df_comisiones):
@@ -1268,7 +1283,43 @@ def cargar_precios():
     df = df[df["Producto"] != ""]
     df = df[df["Precio Lista"] > 0]
     df["Kilos por Bulto"] = df["Presentacion"].apply(extraer_kilos)
-    return df.drop_duplicates(subset=["Producto"])
+
+    # Respeta siempre la lista de precios. Si hace falta crear un alias,
+    # copia precio/presentación desde el producto real más parecido.
+    df["_prod_norm"] = df["Producto"].astype(str).apply(lambda x: normalizar_busqueda(x) if "normalizar_busqueda" in globals() else str(x).lower())
+
+    def agregar_alias_si_falta(nombre_alias, palabras_busqueda):
+        nonlocal df
+        alias_norm = normalizar_busqueda(nombre_alias) if "normalizar_busqueda" in globals() else nombre_alias.lower()
+        if (df["_prod_norm"] == alias_norm).any():
+            return
+        mask = pd.Series([True] * len(df))
+        for palabra in palabras_busqueda:
+            mask = mask & df["_prod_norm"].str.contains(palabra, na=False)
+        if mask.any():
+            base = df[mask].iloc[0].copy()
+            base["Producto"] = nombre_alias
+            base["_prod_norm"] = alias_norm
+            df = pd.concat([df, pd.DataFrame([base])], ignore_index=True)
+
+    # Acondicionada Pigue: primero respeta si existe con Pigüé;
+    # si no existe, copia precio/presentación desde una acondicionada.
+    agregar_alias_si_falta("Acondicionada Pigue", ["acondicion", "pigue"])
+    agregar_alias_si_falta("Acondicionada Pigue", ["acondicion"])
+
+    # Harina Pigue 0000: primero respeta si existe con Pigüé;
+    # si no existe, copia precio/presentación desde harina 0000.
+    agregar_alias_si_falta("Harina Pigue 0000", ["pigue", "0000"])
+    agregar_alias_si_falta("Harina Pigue 0000", ["0000"])
+
+    df = df.drop(columns=["_prod_norm"], errors="ignore")
+    mask_acond_pigue = df["Producto"].astype(str).apply(normalizar_busqueda).eq(normalizar_busqueda("Acondicionada Pigue"))
+    if mask_acond_pigue.any() and "Precio Lista" in df.columns:
+        df.loc[mask_acond_pigue, "Precio Lista"] = 15721.0
+    if mask_acond_pigue.any() and "Kilos por Bulto" in df.columns:
+        df.loc[mask_acond_pigue, "Kilos por Bulto"] = 25.0
+    df = df.drop_duplicates(subset=["Producto"], keep="first")
+    return df
 
 
 # ============================================================
@@ -1294,6 +1345,18 @@ df_notas_credito = leer_sql("notas_credito")
 df_visitas = leer_sql("visitas")
 df_objetivos = leer_sql("objetivos")
 df_precios = cargar_precios()
+
+# FIX FINAL PRECIO/KILOS ACONDICIONADA PIGUE
+if "Producto" in df_precios.columns:
+    mask_acond_pigue_final = df_precios["Producto"].astype(str).apply(normalizar_busqueda).eq(normalizar_busqueda("Acondicionada Pigue"))
+    if mask_acond_pigue_final.any():
+        if "Precio Lista" in df_precios.columns:
+            df_precios.loc[mask_acond_pigue_final, "Precio Lista"] = 15721.0
+        if "Kilos por Bulto" in df_precios.columns:
+            df_precios.loc[mask_acond_pigue_final, "Kilos por Bulto"] = 25.0
+        if "Presentacion" in df_precios.columns:
+            df_precios.loc[mask_acond_pigue_final, "Presentacion"] = "25 Kgs"
+
 df_comisiones_venta = cargar_comisiones_venta()
 
 df_clientes = df_clientes.rename(
@@ -1588,37 +1651,55 @@ if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", width=170)
 
 st.sidebar.markdown('<div class="sidebar-title">CRISTIAN RODRIGUEZ</div>', unsafe_allow_html=True)
-st.sidebar.caption(f"Usuario: {USER.get('nombre')} · Rol: {USER.get('rol').upper()}")
-if st.sidebar.button("Cerrar sesión", use_container_width=True):
-    st.session_state.pop("usuario_logueado", None)
-    st.rerun()
+
+opciones_menu = [
+    "Inicio",
+    "Pedidos",
+    "Cobranza",
+    "Pagos",
+    "Notas de Crédito",
+    "Cuenta Corriente",
+    "Visitas",
+    "Objetivos",
+    "Inteligencia",
+    "Clientes",
+    "Productos",
+    "Ciclo comercial",
+    "Informes",
+]
+
+if "menu_actual" not in st.session_state:
+    st.session_state["menu_actual"] = "Inicio"
 
 st.sidebar.markdown('<div class="sidebar-section">Panel principal</div>', unsafe_allow_html=True)
 
 menu = st.sidebar.radio(
     "Menú",
-    [
-        "Inicio",
-        "Pedidos",
-        "Cobranza",
-        "Pagos",
-        "Notas de Crédito",
-        "Cuenta Corriente",
-        "Visitas",
-        "Objetivos",
-        "Inteligencia",
-        "Clientes",
-        "Productos",
-        "Ciclo comercial",
-        "Informes",
-    ],
+    opciones_menu,
+    index=opciones_menu.index(st.session_state.get("menu_actual", "Inicio")) if st.session_state.get("menu_actual", "Inicio") in opciones_menu else 0,
+    key="menu_radio",
     label_visibility="collapsed",
 )
+
+st.session_state["menu_actual"] = menu
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"**Ciclo:** {periodo_actual}")
 st.sidebar.write(f"**Pedidos ciclo:** {len(df_ciclo)}")
-st.sidebar.write("**Base:** SQLite")
+
+# Datos del ciclo actual en el panel izquierdo
+facturacion_ciclo_sidebar = float(df_ciclo["Importe"].sum()) if not df_ciclo.empty and "Importe" in df_ciclo.columns else 0.0
+saldo_ciclo_sidebar = (
+    float(df_ciclo[~df_ciclo["Cobrado"].astype(str).str.lower().isin(["sí", "si", "cobrado"])]["Importe"].sum())
+    if not df_ciclo.empty and "Cobrado" in df_ciclo.columns and "Importe" in df_ciclo.columns
+    else 0.0
+)
+
+st.sidebar.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+if st.sidebar.button("Cerrar sesión", use_container_width=True):
+    st.session_state.pop("usuario_logueado", None)
+    st.session_state.pop("menu_actual", None)
+    st.rerun()
 
 st.markdown(f'<div class="main-title">{menu.upper()}</div>', unsafe_allow_html=True)
 
@@ -1733,9 +1814,6 @@ clientes_activos = len(df_vista[df_vista["Estado Comercial"] == "Activo"]) if "E
 clientes_pre = len(df_vista[df_vista["Estado Comercial"] == "Pre-perdido"]) if "Estado Comercial" in df_vista.columns else 0
 clientes_perdidos = len(df_vista[df_vista["Estado Comercial"] == "Perdido"]) if "Estado Comercial" in df_vista.columns else 0
 clientes_con_deuda = len(cuenta_corriente_f[cuenta_corriente_f["Saldo Pendiente"] > 0]) if not cuenta_corriente_f.empty else 0
-
-st.sidebar.write(f"**Facturación acumulada:** {fmt_ars(facturacion_acumulada)}")
-st.sidebar.write(f"**Saldo pendiente:** {fmt_ars(saldo_pendiente_f)}")
 
 
 # ============================================================
@@ -1890,6 +1968,28 @@ if menu == "Inicio":
         )
         if pendientes > 0:
             st.markdown(f'<div class="alert-box">Pedidos pendientes de cobro: {pendientes}</div>', unsafe_allow_html=True)
+            if st.button("Ver pendientes de cobro", use_container_width=True):
+                st.session_state["menu_actual"] = "Cobranza"
+                st.rerun()
+
+            pendientes_inicio = df_pedidos_f[
+                ~df_pedidos_f["Cobrado"].astype(str).str.lower().isin(["sí", "si", "cobrado"])
+            ].copy()
+            if not pendientes_inicio.empty:
+                pendientes_resumen = pendientes_inicio.groupby("Pedido ID", as_index=False).agg({
+                    "Cliente": "first",
+                    "Fecha": "first",
+                    "Importe": "sum",
+                })
+                pendientes_resumen["Dias desde pedido"] = (
+                    pd.Timestamp.today().normalize() - pd.to_datetime(pendientes_resumen["Fecha"], errors="coerce").dt.normalize()
+                ).dt.days.fillna(0).astype(int)
+                por_vencer_inicio = pendientes_resumen[
+                    (pendientes_resumen["Dias desde pedido"] >= 10) &
+                    (pendientes_resumen["Dias desde pedido"] < 14)
+                ]
+                if not por_vencer_inicio.empty:
+                    st.markdown(f'<div class="alert-box">Facturas por vencer: {len(por_vencer_inicio)} pedido/s entre 10 y 13 días.</div>', unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1974,60 +2074,159 @@ if menu == "Inicio":
 elif menu == "Pedidos":
     st.markdown('<span class="badge">Gestión de pedidos</span>', unsafe_allow_html=True)
 
+    # Resumen de clientes compradores del ciclo actual
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### Clientes compradores del ciclo actual")
+    if df_ciclo_f.empty:
+        st.info("Todavía no hay clientes compradores en el ciclo actual con los filtros aplicados.")
+    else:
+        compradores_ciclo = (
+            df_ciclo_f.groupby("Cliente", as_index=False)
+            .agg({
+                "Pedido ID": "nunique",
+                "Importe": "sum",
+                "Toneladas": "sum",
+                "Comisión Venta": "sum",
+            })
+            .rename(columns={
+                "Pedido ID": "Pedidos",
+                "Importe": "Facturación",
+                "Toneladas": "Toneladas",
+                "Comisión Venta": "Comisión venta",
+            })
+            .sort_values("Facturación", ascending=False)
+        )
+
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        with cc1:
+            metric_card("Clientes compradores", compradores_ciclo["Cliente"].nunique())
+        with cc2:
+            metric_card("Pedidos ciclo", int(compradores_ciclo["Pedidos"].sum()))
+        with cc3:
+            metric_card("Facturación ciclo", fmt_ars(compradores_ciclo["Facturación"].sum()))
+        with cc4:
+            metric_card("Toneladas ciclo", fmt_num(compradores_ciclo["Toneladas"].sum()))
+
+        mostrar_tabla_pro(
+            compradores_ciclo,
+            columnas=["Cliente", "Pedidos", "Facturación", "Toneladas", "Comisión venta"]
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
     if df_clientes.empty or df_precios.empty:
         st.warning("Faltan clientes o precios para cargar pedidos.")
     else:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        p1, p2, p3 = st.columns(3)
 
+        p1, p2, p3 = st.columns(3)
         cliente = p1.selectbox("Cliente", sorted(df_clientes["Cliente"].dropna().unique()))
         fecha_pedido = p2.date_input("Fecha", date.today())
-        producto = p3.selectbox("Producto", sorted(df_precios["Producto"].dropna().unique()))
+        cantidad_items = p3.number_input("Cantidad de productos en el pedido", min_value=1, max_value=10, value=1, step=1)
 
-        prod = df_precios[df_precios["Producto"] == producto].iloc[0]
-        presentacion = prod["Presentacion"]
-        kilos = float(prod["Kilos por Bulto"])
-        precio_lista = float(prod["Precio Lista"])
+        productos_pedido = []
+        total_importe = 0.0
+        total_toneladas = 0.0
+        total_comision_venta = 0.0
 
-        q1, q2, q3, q4 = st.columns(4)
-        q1.text_input("Presentación", presentacion, disabled=True)
-        q2.text_input("Kilos por bulto", fmt_num(kilos, 2), disabled=True)
-        cantidad = q3.number_input("Cantidad bolsas / packs", min_value=0.0, step=1.0)
-        precio_venta = q4.number_input("Precio venta", min_value=0.0, value=precio_lista, step=1.0)
-
-        toneladas = cantidad * kilos / 1000
-        importe = cantidad * precio_venta
         total_cliente_actual = (
             float(df_pedidos[df_pedidos["Cliente"] == cliente]["Importe"].sum())
             if not df_pedidos.empty and "Cliente" in df_pedidos.columns
             else 0.0
         )
-        porcentaje_comision_venta, categoria_comision_venta = calcular_porcentaje_comision_venta(
-            producto,
-            total_cliente_actual + importe,
-            df_comisiones_venta
-        )
-        comision_venta = importe * (porcentaje_comision_venta / 100)
 
-        m1, m2, m3 = st.columns(3)
+        st.markdown("### Productos del pedido")
+
+        for i in range(int(cantidad_items)):
+            st.markdown(f"#### Producto {i + 1}")
+            a1, a2, a3, a4 = st.columns(4)
+
+            producto = a1.selectbox(
+                "Producto",
+                sorted(df_precios["Producto"].dropna().unique()),
+                key=f"producto_multi_{i}"
+            )
+
+            prod = df_precios[df_precios["Producto"] == producto].iloc[0]
+            presentacion = prod["Presentacion"]
+            kilos_base = float(pd.to_numeric(prod["Kilos por Bulto"], errors="coerce") or 0)
+            precio_lista = float(pd.to_numeric(prod["Precio Lista"], errors="coerce") or 0)
+
+            producto_key = normalizar_busqueda(producto).replace(" ", "_").replace("/", "_")
+
+            kilos = a2.number_input(
+                "Kilos por bulto",
+                min_value=0.0,
+                value=float(kilos_base),
+                step=1.0,
+                key=f"kilos_multi_{i}_{producto_key}"
+            )
+            cantidad = a3.number_input(
+                "Cantidad bolsas / paquetes",
+                min_value=0.0,
+                step=1.0,
+                key=f"cantidad_multi_{i}_{producto_key}"
+            )
+            precio_venta = a4.number_input(
+                "Precio venta",
+                min_value=0.0,
+                value=float(precio_lista),
+                step=1.0,
+                key=f"precio_multi_{i}_{producto_key}"
+            )
+
+            toneladas = cantidad * kilos / 1000
+            importe = cantidad * precio_venta
+
+            porcentaje_comision_venta, categoria_comision_venta = calcular_porcentaje_comision_venta(
+                producto,
+                total_cliente_actual + total_importe + importe,
+                df_comisiones_venta
+            )
+            comision_venta = importe * (porcentaje_comision_venta / 100)
+
+            productos_pedido.append({
+                "producto": producto,
+                "presentacion": presentacion,
+                "cantidad": cantidad,
+                "kilos": kilos,
+                "precio_lista": precio_lista,
+                "precio_venta": precio_venta,
+                "toneladas": toneladas,
+                "importe": importe,
+                "porcentaje_comision_venta": porcentaje_comision_venta,
+                "categoria_comision_venta": categoria_comision_venta,
+                "comision_venta": comision_venta,
+            })
+
+            total_importe += importe
+            total_toneladas += toneladas
+            total_comision_venta += comision_venta
+
+            cp1, cp2 = st.columns(2)
+            with cp1:
+                metric_card(f"Categoría producto {i + 1}", categoria_comision_venta)
+            with cp2:
+                metric_card(f"% comisión producto {i + 1}", f"{porcentaje_comision_venta:.3f}%")
+
+        porcentaje_promedio_pedido = (total_comision_venta / total_importe * 100) if total_importe > 0 else 0.0
+
+        m1, m2, m3, m4 = st.columns(4)
         with m1:
-            metric_card("Toneladas", fmt_num(toneladas))
+            metric_card("Toneladas pedido", fmt_num(total_toneladas))
         with m2:
-            metric_card("Importe", fmt_ars(importe))
+            metric_card("Importe total", fmt_ars(total_importe))
         with m3:
-            metric_card("Comisión venta", fmt_ars(comision_venta))
-
-        ca, cb = st.columns(2)
-        with ca:
-            metric_card("Categoría comisión venta", categoria_comision_venta)
-        with cb:
-            metric_card("% comisión venta", f"{porcentaje_comision_venta:.3f}%")
+            metric_card("Comisión venta total", fmt_ars(total_comision_venta))
+        with m4:
+            metric_card("% comisión pedido", f"{porcentaje_promedio_pedido:.3f}%")
 
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-        if st.button("Guardar pedido", use_container_width=True):
-            if cantidad <= 0:
-                st.error("La cantidad debe ser mayor a 0.")
+        if st.button("Guardar pedido completo", use_container_width=True):
+            lineas_validas = [x for x in productos_pedido if x["cantidad"] > 0 and x["importe"] > 0]
+            if not lineas_validas:
+                st.error("Cargá al menos un producto con cantidad y precio mayor a 0.")
             else:
                 con = conectar()
                 max_id = pd.read_sql_query("SELECT MAX(id) AS max_id FROM pedidos", con)["max_id"].iloc[0]
@@ -2035,54 +2234,69 @@ elif menu == "Pedidos":
                 pedido_id = f"PED-{nuevo_num:05d}"
                 ahora = datetime.now()
 
-                con.execute(
-                    """
-                    INSERT INTO pedidos (
-                        pedido_id, cliente, fecha, hora_pedido, fechahora_pedido, producto, presentacion,
-                        cantidad_bultos, kilos_por_bulto, precio_lista, precio_venta, importe, toneladas,
-                        cobrado, fecha_cobro, dias_al_cobro, porcentaje_cobranza, regla_cobranza,
-                        comision_venta, comision_cobranza, comision_total,
-                        categoria_comision_venta, porcentaje_comision_venta, id_usuario
+                for item in lineas_validas:
+                    con.execute(
+                        """
+                        INSERT INTO pedidos (
+                            pedido_id, cliente, fecha, hora_pedido, fechahora_pedido, producto, presentacion,
+                            cantidad_bultos, kilos_por_bulto, precio_lista, precio_venta, importe, toneladas,
+                            cobrado, fecha_cobro, dias_al_cobro, porcentaje_cobranza, regla_cobranza,
+                            comision_venta, comision_cobranza, comision_total,
+                            categoria_comision_venta, porcentaje_comision_venta, id_usuario
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            pedido_id,
+                            cliente,
+                            str(fecha_pedido),
+                            ahora.strftime("%H:%M:%S"),
+                            str(ahora),
+                            item["producto"],
+                            item["presentacion"],
+                            item["cantidad"],
+                            item["kilos"],
+                            item["precio_lista"],
+                            item["precio_venta"],
+                            item["importe"],
+                            item["toneladas"],
+                            "No",
+                            "",
+                            0,
+                            0,
+                            "Pendiente",
+                            item["comision_venta"],
+                            0,
+                            item["comision_venta"],
+                            item["categoria_comision_venta"],
+                            item["porcentaje_comision_venta"],
+                            ID_USUARIO,
+                        ),
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        pedido_id,
-                        cliente,
-                        str(fecha_pedido),
-                        ahora.strftime("%H:%M:%S"),
-                        str(ahora),
-                        producto,
-                        presentacion,
-                        cantidad,
-                        kilos,
-                        precio_lista,
-                        precio_venta,
-                        importe,
-                        toneladas,
-                        "No",
-                        "",
-                        0,
-                        0,
-                        "Pendiente",
-                        comision_venta,
-                        0,
-                        comision_venta,
-                        categoria_comision_venta,
-                        porcentaje_comision_venta,
-                        ID_USUARIO,
-                    ),
-                )
+
                 con.commit()
                 con.close()
-                st.success(f"Pedido guardado correctamente: {pedido_id}")
+                st.success(f"Pedido guardado correctamente: {pedido_id} con {len(lineas_validas)} producto/s")
                 st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("## Pedidos del día")
-    df_hoy = df_pedidos_f[df_pedidos_f["Fecha"].dt.date == date.today()].copy() if not df_pedidos_f.empty else df_pedidos_f
-    mostrar_tabla_pro(df_hoy)
+    st.markdown("## Pedidos del ciclo actual")
+    mostrar_tabla_pro(df_ciclo_f.sort_values(["Fecha", "Hora Pedido"], ascending=[False, False]) if not df_ciclo_f.empty else df_ciclo_f)
+
+    st.markdown("## Historial por ciclo comercial")
+    if df_pedidos_f.empty:
+        st.info("No hay pedidos cargados.")
+    else:
+        historial_ciclos = df_pedidos_f.copy()
+        historial_ciclos["Inicio Ciclo"] = historial_ciclos["Fecha"].apply(lambda x: ciclo_comercial(pd.to_datetime(x))[0])
+        historial_ciclos["Fin Ciclo"] = historial_ciclos["Fecha"].apply(lambda x: ciclo_comercial(pd.to_datetime(x))[1])
+        historial_ciclos["Ciclo"] = historial_ciclos["Inicio Ciclo"].dt.strftime("%d/%m/%Y") + " al " + historial_ciclos["Fin Ciclo"].dt.strftime("%d/%m/%Y")
+
+        ciclos = sorted(historial_ciclos["Ciclo"].dropna().unique().tolist(), reverse=True)
+        ciclo_sel = st.selectbox("Ver pedidos del ciclo", ciclos)
+        df_ciclo_hist = historial_ciclos[historial_ciclos["Ciclo"] == ciclo_sel].drop(columns=["Inicio Ciclo", "Fin Ciclo"], errors="ignore")
+        mostrar_tabla_pro(df_ciclo_hist.sort_values(["Fecha", "Hora Pedido"], ascending=[False, False]))
 
 
 elif menu == "Cobranza":
@@ -2091,21 +2305,53 @@ elif menu == "Cobranza":
     if df_pedidos_f.empty:
         st.info("No hay pedidos con los filtros actuales.")
     else:
-        resumen = df_pedidos_f.groupby("Pedido ID", as_index=False).agg(
+        pedidos_pendientes_cobro = df_pedidos_f[
+            ~df_pedidos_f["Cobrado"].astype(str).str.lower().isin(["sí", "si", "cobrado"])
+        ].copy()
+
+        if pedidos_pendientes_cobro.empty:
+            st.success("No hay pedidos pendientes de cobro con los filtros actuales.")
+            st.stop()
+
+        resumen = pedidos_pendientes_cobro.groupby("Pedido ID", as_index=False).agg(
             {"Cliente": "first", "Fecha": "first", "Importe": "sum", "Comisión Venta": "sum", "Cobrado": "first"}
         )
+        resumen["Dias desde pedido"] = (
+            pd.Timestamp.today().normalize() - pd.to_datetime(resumen["Fecha"], errors="coerce").dt.normalize()
+        ).dt.days.fillna(0).astype(int)
+
+        por_vencer = resumen[(resumen["Dias desde pedido"] >= 10) & (resumen["Dias desde pedido"] < 14)]
+        vencidos = resumen[resumen["Dias desde pedido"] >= 14]
+        if not por_vencer.empty:
+            st.warning(f"Facturas por vencer: {len(por_vencer)} pedido/s están entre 10 y 13 días desde la carga.")
+        if not vencidos.empty:
+            st.error(f"Facturas vencidas: {len(vencidos)} pedido/s ya tienen 14 días o más desde la carga.")
 
         resumen["Pedido para cobrar"] = (
             resumen["Cliente"].astype(str)
             + " | "
             + resumen["Pedido ID"].astype(str)
             + " | "
+            + resumen["Dias desde pedido"].astype(str)
+            + " días | "
             + resumen["Importe"].apply(fmt_ars)
         )
 
         pedido_label = st.selectbox("Cliente / pedido a cobrar", resumen["Pedido para cobrar"].tolist())
         pedido = resumen.loc[resumen["Pedido para cobrar"] == pedido_label, "Pedido ID"].iloc[0]
         fila = resumen[resumen["Pedido ID"] == pedido].iloc[0]
+
+        st.markdown("### Estado actual del cliente")
+        cc_cliente = cuenta_corriente_f[cuenta_corriente_f["Cliente"] == fila["Cliente"]].copy() if not cuenta_corriente_f.empty else pd.DataFrame()
+        ccli1, ccli2, ccli3, ccli4 = st.columns(4)
+        with ccli1:
+            metric_card("Cliente", fila["Cliente"])
+        with ccli2:
+            metric_card("Saldo pendiente", fmt_ars(float(cc_cliente["Saldo Pendiente"].sum()) if not cc_cliente.empty and "Saldo Pendiente" in cc_cliente.columns else 0))
+        with ccli3:
+            metric_card("Pedidos pendientes", len(resumen[resumen["Cliente"] == fila["Cliente"]]))
+        with ccli4:
+            metric_card("Días desde pedido", int(fila["Dias desde pedido"]))
 
         f_ent, f_cob = st.columns(2)
         with f_ent:
@@ -2116,15 +2362,7 @@ elif menu == "Cobranza":
         dias = (pd.Timestamp(fecha_cobro).normalize() - pd.Timestamp(fecha_entrega).normalize()).days
         dias = max(0, int(dias))
 
-        st.info(
-            "La comisión por cobranza se calcula desde la fecha de entrega hasta la fecha de cobro."
-        )
-
-        d1, d2 = st.columns(2)
-        with d1:
-            metric_card("Días entrega → cobro", dias)
-        with d2:
-            metric_card("Fecha de entrega", fecha_entrega.strftime("%d/%m/%Y"))
+        st.info("La comisión por cobranza se calcula desde la fecha de entrega hasta la fecha de cobro.")
 
         porc, regla = regla_cobranza(dias)
         com_cob = fila["Importe"] * porc
@@ -2132,19 +2370,13 @@ elif menu == "Cobranza":
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            metric_card("Cliente", fila["Cliente"])
-        with c2:
             metric_card("Importe", fmt_ars(fila["Importe"]))
+        with c2:
+            metric_card("Días entrega → cobro", dias)
         with c3:
             metric_card("Comisión cobranza", fmt_ars(com_cob))
         with c4:
             metric_card("Comisión total", fmt_ars(com_total))
-
-        r1, r2 = st.columns(2)
-        with r1:
-            metric_card("Regla aplicada", regla)
-        with r2:
-            metric_card("% cobranza", f"{porc * 100:.2f}%")
 
         b1, b2 = st.columns(2)
 
@@ -2179,6 +2411,14 @@ elif menu == "Cobranza":
             con.close()
             st.success("Pedido volvió a pendiente")
             st.rerun()
+
+        st.markdown("## Pedidos pendientes de cobro")
+        resumen_vista = resumen.copy()
+        resumen_vista["Estado"] = resumen_vista["Dias desde pedido"].apply(
+            lambda d: '<span class="estado-rojo">+10 días</span>' if d >= 10 else '<span class="estado-verde">Menos de 10 días</span>'
+        )
+        resumen_vista = resumen_vista.rename(columns={"Pedido ID": "Pedido", "Importe": "Importe pendiente"})
+        mostrar_tabla_pro(resumen_vista, ["Cliente", "Pedido", "Fecha", "Dias desde pedido", "Estado", "Importe pendiente"])
 
 
 elif menu == "Pagos":
