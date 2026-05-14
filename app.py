@@ -2,6 +2,7 @@
 import os
 import re
 import sqlite3
+from urllib.parse import quote
 import hashlib
 from io import BytesIO
 from datetime import date, datetime
@@ -2974,6 +2975,151 @@ elif menu == "Productos":
 
         mostrar_tabla_pro(productos)
         st.bar_chart(productos.head(10).set_index("Producto")["Facturación"])
+
+
+
+elif menu == "Mensajes WhatsApp":
+    st.markdown('<span class="badge">Mensajes masivos por WhatsApp Web</span>', unsafe_allow_html=True)
+
+    st.markdown('<div class="card-yellow">', unsafe_allow_html=True)
+    st.markdown("### Crear campaña de mensajes")
+    st.info(
+        "Este módulo prepara mensajes y enlaces de WhatsApp Web. "
+        "El envío final lo confirmás vos manualmente desde WhatsApp para evitar errores o bloqueos."
+    )
+
+    if df_clientes.empty:
+        st.warning("No hay clientes cargados para seleccionar.")
+        st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        clientes_msg = df_clientes.copy()
+
+        posibles_tel = ["Teléfono", "Telefono", "telefono", "teléfono", "Celular", "celular", "WhatsApp", "whatsapp"]
+        col_tel = None
+        for c in posibles_tel:
+            if c in clientes_msg.columns:
+                col_tel = c
+                break
+
+        if col_tel is None:
+            st.error("No encontré columna de teléfono. Usá una columna llamada Teléfono, Telefono, Celular o WhatsApp.")
+            st.markdown("</div>", unsafe_allow_html=True)
+        else:
+            buscar_msg = st.text_input("Buscar cliente", placeholder="Escribí para filtrar clientes...")
+
+            if buscar_msg:
+                clientes_msg = clientes_msg[
+                    clientes_msg["Cliente"].astype(str).str.contains(buscar_msg, case=False, na=False)
+                ].copy()
+
+            clientes_msg["Teléfono limpio"] = (
+                clientes_msg[col_tel]
+                .astype(str)
+                .str.replace(r"\D", "", regex=True)
+            )
+
+            clientes_msg = clientes_msg[clientes_msg["Cliente"].notna()].copy()
+
+            seleccion = st.multiselect(
+                "Seleccionar clientes",
+                clientes_msg["Cliente"].dropna().astype(str).unique().tolist()
+            )
+
+            plantilla = st.text_area(
+                "Mensaje",
+                value=(
+                    "Hola {cliente}, ¿cómo estás? Te escribo para comentarte una novedad comercial. "
+                    "Cualquier consulta quedo atento. Saludos."
+                ),
+                height=140,
+                help="Podés usar {cliente} para insertar automáticamente el nombre del cliente."
+            )
+
+            col_a, col_b = st.columns(2)
+            agregar_nombre = col_a.checkbox("Personalizar con nombre del cliente", value=True)
+            incluir_saldo = col_b.checkbox("Incluir saldo pendiente si existe", value=False)
+
+            st.markdown("### Vista previa")
+
+            if not seleccion:
+                st.info("Seleccioná al menos un cliente para generar los mensajes.")
+            else:
+                filas = []
+
+                for cliente_sel in seleccion:
+                    fila_cliente = clientes_msg[clientes_msg["Cliente"].astype(str) == str(cliente_sel)].iloc[0]
+                    telefono = str(fila_cliente.get("Teléfono limpio", "")).strip()
+
+                    if telefono.startswith("0"):
+                        telefono = telefono[1:]
+
+                    if telefono and not telefono.startswith("54") and len(telefono) <= 11:
+                        telefono = "54" + telefono
+
+                    mensaje = plantilla
+                    if agregar_nombre:
+                        mensaje = mensaje.replace("{cliente}", str(cliente_sel))
+                    else:
+                        mensaje = mensaje.replace("{cliente}", "")
+
+                    if incluir_saldo and "cuenta_corriente_f" in globals() and not cuenta_corriente_f.empty:
+                        cc = cuenta_corriente_f[cuenta_corriente_f["Cliente"].astype(str) == str(cliente_sel)].copy()
+                        if not cc.empty and "Saldo Pendiente" in cc.columns:
+                            saldo_cliente = float(pd.to_numeric(cc["Saldo Pendiente"], errors="coerce").fillna(0).sum())
+                            if saldo_cliente > 0:
+                                mensaje += f"\n\nSaldo pendiente registrado: {fmt_ars(saldo_cliente)}"
+
+                    estado = "OK"
+                    link = ""
+                    if not telefono or len(telefono) < 10:
+                        estado = "Revisar teléfono"
+                    else:
+                        link = f"https://wa.me/{telefono}?text={quote(mensaje)}"
+
+                    filas.append({
+                        "Cliente": cliente_sel,
+                        "Teléfono": telefono,
+                        "Estado": estado,
+                        "Mensaje": mensaje,
+                        "Link WhatsApp": link
+                    })
+
+                df_mensajes = pd.DataFrame(filas)
+
+                total_ok = len(df_mensajes[df_mensajes["Estado"] == "OK"])
+                total_revisar = len(df_mensajes[df_mensajes["Estado"] != "OK"])
+
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    metric_card("Clientes seleccionados", len(df_mensajes))
+                with m2:
+                    metric_card("Listos para enviar", total_ok)
+                with m3:
+                    metric_card("Revisar teléfono", total_revisar)
+
+                mostrar_tabla_pro(df_mensajes, columnas=["Cliente", "Teléfono", "Estado", "Mensaje"])
+
+                st.markdown("### Abrir WhatsApp Web")
+                st.caption("Abrí cada enlace, revisá el mensaje y confirmá el envío manualmente.")
+
+                for _, row in df_mensajes.iterrows():
+                    if row["Estado"] == "OK" and row["Link WhatsApp"]:
+                        st.link_button(
+                            f"Abrir WhatsApp - {row['Cliente']}",
+                            row["Link WhatsApp"],
+                            use_container_width=True
+                        )
+
+                csv_mensajes = df_mensajes.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    "Descargar campaña en CSV",
+                    csv_mensajes,
+                    "campaña_whatsapp.csv",
+                    "text/csv",
+                    use_container_width=True
+                )
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
 elif menu == "Ciclo comercial":
